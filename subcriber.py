@@ -406,6 +406,7 @@ class ModernUI:
                 if self.auto_increment_speed.get() and 'VehSpdEMS' in signals:
                     signals['VehSpdEMS'] = speed_tx_value
                     speed_tx_value = (speed_tx_value + 1) % (VEHICLE_SPEED_MAX + 1)
+                    print("VehSpdEMS",speed_tx_value)
 
                 try:
                     message = db.get_message_by_frame_id(can_id)
@@ -501,3 +502,4 @@ if __name__ == "__main__":
     app = ModernUI(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
+
