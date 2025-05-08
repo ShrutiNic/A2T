@@ -66,6 +66,11 @@ class ModernUI:
         self.setup_ui()
         self.transmitter = CANTransmitter()
 
+        # Counters
+        self.tx_count = 0
+        self.rx_count = 0
+        self.error_count = 0
+
 
         # Style configuration
         self.style = ttk.Style()
@@ -85,10 +90,7 @@ class ModernUI:
         self.rx_count_var = tk.StringVar(value="Messages Received: 0")
         self.error_count_var = tk.StringVar(value="Errors: 0")
 
-        # Counters
-        self.tx_count = 0
-        self.rx_count = 0
-        self.error_count = 0
+        
 
         # Status bar
         status_bar = ttk.Frame(self.root)
@@ -129,14 +131,16 @@ class ModernUI:
         ).pack(fill=tk.X, pady=5)
 
 
-        ttk.Label(dbc_tab, text="Select CAN ID:").pack(anchor='w', pady=(10, 0))
+        ttk.Label(dbc_tab, text="Select CAN ID:").pack(anchor='w', pady=(8, 0))
         self.can_id_dropdown = ttk.Combobox(dbc_tab, textvariable=self.can_id_var, state="readonly")
         self.can_id_dropdown.bind("<<ComboboxSelected>>", self.update_spn_fields)
-        self.can_id_dropdown.pack(fill=tk.X, pady=5)
+        self.can_id_dropdown.pack(fill=tk.X, pady=3)
 
         # Signals frame with scrollbar
         signals_frame = ttk.Frame(dbc_tab)
-        signals_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        signals_frame.pack(fill=tk.BOTH, expand=True, pady=3)
+
+         
 
         canvas = tk.Canvas(signals_frame, borderwidth=0, highlightthickness=0)
         scrollbar = ttk.Scrollbar(signals_frame, orient="vertical", command=canvas.yview)
@@ -160,21 +164,23 @@ class ModernUI:
 
         # Selected Messages frame
         selected_frame = ttk.LabelFrame(left_panel, text="Selected Messages")
-        selected_frame.pack(fill=tk.BOTH, pady=(10, 0))
+        selected_frame.pack(fill=tk.BOTH, pady=(8, 0))
 
-        self.selected_listbox = tk.Listbox(selected_frame, height=8, font=('Consolas', 9))
-        self.selected_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.selected_listbox = tk.Listbox(selected_frame, height=6, font=('Consolas', 9))
+        self.selected_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=3)
 
         btn_frame = ttk.Frame(selected_frame)
         btn_frame.pack(fill=tk.X, pady=5)
+
+        # Control buttons
+        control_frame = ttk.Frame(left_panel)
+        control_frame.pack(fill=tk.X, pady=6)
 
         ttk.Button(btn_frame, text="Add", command=self.add_selected_id).pack(side=tk.LEFT, expand=True)
         ttk.Button(btn_frame, text="Remove", command=self.remove_selected_id).pack(side=tk.LEFT, expand=True)
         ttk.Button(btn_frame, text="Clear All", command=self.clear_selected_ids).pack(side=tk.LEFT, expand=True)
 
-        # Control buttons
-        control_frame = ttk.Frame(left_panel)
-        control_frame.pack(fill=tk.X, pady=10)
+       
 
         # self.start_btn = ttk.Button(control_frame, text="Start Transmission",
         #                             command=self.start_transmission, )
@@ -278,9 +284,9 @@ class ModernUI:
         except:
             pass
 
-        title_label = ttk.Label(header_frame, text="A2T Data Analysis Data Utility",
-                                font=('Segoe UI', 16, 'bold'))
-        title_label.pack(side=tk.LEFT, padx=600)
+        title_label = ttk.Label(header_frame, text="A2T Data Analysis Utility",
+                                font=('Segoe UI', 14, 'bold'))
+        title_label.pack(side=tk.LEFT, padx=550)
 
 
 
@@ -402,6 +408,7 @@ class ModernUI:
                 if self.auto_increment_odo.get() and 'OdoValDiag' in signals:
                     signals['OdoValDiag'] = odometer_tx_value
                     odometer_tx_value = (odometer_tx_value + 5) % (ODOMETER_MAX + 1)
+                    print("OdoValDiag",odometer_tx_value)
 
                 if self.auto_increment_speed.get() and 'VehSpdEMS' in signals:
                     signals['VehSpdEMS'] = speed_tx_value
