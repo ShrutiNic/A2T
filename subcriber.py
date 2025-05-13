@@ -601,7 +601,23 @@ class ModernUI:
 
             self.api_output.delete(1.0, tk.END)
             self.api_output.insert(tk.END, f"API Response for VIN: {vin}\n\n", 'bold')
-            self.api_output.insert(tk.END, json.dumps(json_data, indent=2))
+            # self.api_output.insert(tk.END, json.dumps(json_data, indent=2))
+
+            # print("sorted data", json_data)
+
+            # Loop through each result entry
+            for entry in json_data['result']:
+                samples = entry['cvISOGenericCANProtobufData']['vehicleisogenericcanpayload']['genericcan']['sampledataisogenericList']
+                
+                for sample in samples:
+                    identifiers = sample['identifierdlcdataisogenericList']
+                    for item in identifiers:
+                        identifier = item['identifier']
+                        dlc = item['dlc']
+                        can_data = item['data']
+                        # print(f"Identifier: {identifier}, DLC: {dlc}, Data: {can_data}")
+
+                        # self.api_output.insert(tk.END, f"Identifier: {identifier}, DLC: {dlc}, Data: {can_data}\n")
 
         except requests.exceptions.RequestException as e:
             self.api_output.insert(tk.END, f"\n\nAPI Error: {e}", 'error')
@@ -615,59 +631,101 @@ class ModernUI:
             if not selected_ids:
                 return
 
-            CA_CERT = r"D:\Cert\ca.pem"
-            CLIENT_CERT = r"D:\Cert\cc.pem"
-            CLIENT_KEY = r"D:\Cert\ck.pem"
-            API_URL = f"https://aepltest.accoladeelectronics.com:8100/cvISOGenericCANProtobuf/getCvISOGenericCANProtobufDataWithTLS?topic=/device/{vin}/MQTTPROTOBUF/cvISOgenericCAN"
-
             # Clear previous results but keep header
             self.validate_output.delete(1.0, tk.END)
             self.validate_output.insert(tk.END, f"Auto-Validation Results for VIN: {vin}\n\n", 'bold')
+
+            # Add initial timestamp
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.validate_output.insert(tk.END, f"Started: {now}\n\n", 'timestamp')
+
+            CA_CERT = r"ca.pem"
+            CLIENT_CERT = r"cc.pem"
+            CLIENT_KEY = r"ck.pem"
+            API_URL = (
+                f"https://aepltest.accoladeelectronics.com:8100/"
+                f"cvISOGenericCANProtobuf/getCvISOGenericCANProtobufDataWithTLS"
+                f"?topic=/device/{vin}/MQTTPROTOBUF/cvISOgenericCAN"
+            )
 
             response = requests.get(API_URL, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
             response.raise_for_status()
             server_data = response.json()
 
-            for can_id, signals in selected_ids.items():
-                message = db.get_message_by_frame_id(can_id) if db else None
-                if not message:
-                    continue
+            self.validate_output.insert(tk.END, "\nServer Received CAN Messages:\n", 'underline')
 
-                has_non_zero_signals = False
-                signal_output = ""
+            try:
+                for entry in server_data.get("result", []):
+                    samples = (
+                        entry['cvISOGenericCANProtobufData']
+                        ['vehicleisogenericcanpayload']
+                        ['genericcan']
+                        ['sampledataisogenericList']
+                    )
+                    for sample in samples:
+                        for item in sample['identifierdlcdataisogenericList']:
+                            self.validate_output.insert(tk.END, "-" * 50 + "\n\n")
+                            identifier = item['identifier']
+                            dlc = item['dlc']
+                            raw_hex_string = item['data']  # e.g., "00000000000C0000"
 
-                for signal_name, transmitted_value in signals.items():
-                    if transmitted_value == 0 or transmitted_value == 0.0:
-                        continue
+                            try:
+                                # Convert identifier (e.g., "4FA") to int
+                                identifier_int = int(identifier, 16)
 
-                    signal = next((s for s in message.signals if s.name == signal_name), None)
-                    if not signal:
-                        continue
+                                # Convert hex string to bytes
+                                raw_bytes = bytes.fromhex(raw_hex_string)
 
-                    server_value = self.extract_server_value(server_data, can_id, signal_name)
+                                # Display CAN frame
+                                self.validate_output.insert(
+                                    tk.END,
+                                    f"Identifier: 0x{identifier_int:X}\n\n",
+                                    'bold'  # Optional: tag this line for bold text
+                                )
 
-                    signal_output += f"  {signal_name}:\n"
-                    signal_output += f"    Transmitted: {transmitted_value}\n"
-                    signal_output += f"    Server value: {server_value}\n"
+                                # Decode using DBC
+                                if db:
+                                    message = db.get_message_by_frame_id(identifier_int)
+                                    decoded = message.decode(raw_bytes)
 
-                    tolerance = 0.01
-                    if abs(transmitted_value - server_value) < tolerance:
-                        signal_output += "    Status: MATCH\n\n"
-                        has_non_zero_signals = True
-                    else:
-                        signal_output += "    Status: MISMATCH\n\n"
-                        has_non_zero_signals = True
+                                    for sig_name, value in decoded.items():
+                                        if isinstance(value, (int, float)):
+                                            self.validate_output.insert(
+                                                tk.END,
+                                                f"          {sig_name}: {value:.2f}\n"
+                                            )
+                                        else:
+                                            self.validate_output.insert(
+                                                tk.END,
+                                                f"          {sig_name}: {value}\n"
+                                            )
 
-                if has_non_zero_signals:
-                    self.validate_output.insert(tk.END, f"CAN ID: 0x{can_id:X}\n", 'bold')
-                    self.validate_output.insert(tk.END, signal_output)
+                            except Exception as decode_err:
+                                self.validate_output.insert(tk.END, f"(Could not decode: {decode_err})\n")
+
+                        self.validate_output.insert(tk.END, "\n")
+
+            except Exception as parse_err:
+                self.validate_output.insert(tk.END, f"\nError parsing server data: {parse_err}\n", 'error')
 
             # Add timestamp
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             self.validate_output.insert(tk.END, f"\nLast updated: {now}\n", 'timestamp')
 
+            # Automatically save the content to a file
+            try:
+                file_name = f"validation_log_{vin}.txt"
+                # file_name = "validation_log_{vin}.txt"
+                content = self.validate_output.get("1.0", tk.END)
+                with open(file_name, "a", encoding="utf-8") as file:  # Append mode
+                    file.write("\n" + "="*80 + "\n")  # Optional separator
+                    file.write(content)
+            except Exception as file_err:
+                self.validate_output.insert(tk.END, f"\nError saving file: {file_err}\n", 'error')
+
         except requests.exceptions.RequestException as e:
             self.validate_output.insert(tk.END, f"\n\nAPI Error: {e}", 'error')
+
 
     def extract_server_value(self, server_data, can_id, signal_name):
         """
@@ -729,9 +787,9 @@ class ModernUI:
                     return
 
                 # Fetch telemetry data
-                CA_CERT = r"D:\Cert\ca.pem"
-                CLIENT_CERT = r"D:\Cert\cc.pem"
-                CLIENT_KEY = r"D:\Cert\ck.pem"
+                CA_CERT = r"ca.pem"
+                CLIENT_CERT = r"cc.pem"
+                CLIENT_KEY = r"ck.pem"
                 API_URL = f"https://aepltest.accoladeelectronics.com:8100/telemetryProtobuf/getTelemetryProtobufDataWithTLS?topic=/device/{vin}/MQTTPROTOBUF/telemetry"
 
                 response = requests.get(API_URL, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
