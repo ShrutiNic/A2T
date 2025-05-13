@@ -160,7 +160,7 @@ class ModernUI:
         ttk.Label(vin_tab, text="VIN Number:").pack(anchor='w', pady=(10, 0))
         ttk.Entry(vin_tab, textvariable=self.vin_var).pack(fill=tk.X, pady=5)
 
-        ttk.Button(vin_tab, text="Fetch API Data", command=self.fetch_and_display_odometer).pack(fill=tk.X, pady=5)
+        # ttk.Button(vin_tab, text="Fetch API Data", command=self.fetch_and_display_odometer).pack(fill=tk.X, pady=5)
 
         # Selected Messages frame
         selected_frame = ttk.LabelFrame(left_panel, text="Selected Messages")
@@ -393,6 +393,7 @@ class ModernUI:
 
     def transmit_loop(self):
         global sending, odometer_tx_value, speed_tx_value
+
         while sending:
             if not self.transmitter.bus:
                 print("CAN bus not available - attempting reconnection")
@@ -438,8 +439,12 @@ class ModernUI:
 
             time.sleep(TRANSMIT_INTERVAL)
 
+            
+
     def start_transmission(self):
         global sending, send_thread
+
+        self.fetch_and_display_odometer()
 
         if not db:
             messagebox.showerror("Error", "No DBC file loaded")
@@ -460,6 +465,8 @@ class ModernUI:
         send_thread = threading.Thread(target=self.transmit_loop, daemon=True)
         send_thread.start()
 
+        
+
     def stop_transmission(self):
         global sending
         sending = False
@@ -474,9 +481,9 @@ class ModernUI:
                 messagebox.showerror("Error", "Please enter a VIN number")
                 return
 
-            CA_CERT = r"D:\Cert\ca.pem"
-            CLIENT_CERT = r"D:\Cert\cc.pem"
-            CLIENT_KEY = r"D:\Cert\ck.pem"
+            CA_CERT = r"ca.pem"
+            CLIENT_CERT = r"cc.pem"
+            CLIENT_KEY = r"ck.pem"
             API_URL = f"https://aepltest.accoladeelectronics.com:8100/cvISOGenericCANProtobuf/getCvISOGenericCANProtobufDataWithTLS?topic=/device/{vin}/MQTTPROTOBUF/cvISOgenericCAN"
 
             response = requests.get(API_URL, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
