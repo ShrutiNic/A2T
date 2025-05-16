@@ -11,6 +11,8 @@ from PIL import Image, ImageTk
 import webbrowser
 from datetime import datetime
 
+from urllib.parse import urlencode
+
 # Global variables
 db = None
 bus = None
@@ -72,6 +74,9 @@ class ModernUI:
         self.tx_count = 0
         self.rx_count = 0
         self.error_count = 0
+
+        self.start_datetime = None
+        self.end_datetime = None
 
         # Style configuration
         self.style = ttk.Style()
@@ -263,22 +268,22 @@ class ModernUI:
         telemetry_control_frame = ttk.Frame(telemetry_tab)
         telemetry_control_frame.pack(fill=tk.X, pady=5)
 
-        self.telemetry_start_btn = ttk.Button(
-            telemetry_control_frame,
-            text="Start Auto-Refresh",
-            command=self.start_telemetry_refresh,
-            style='Accent.TButton'
-        )
-        self.telemetry_start_btn.pack(side=tk.LEFT, padx=5)
+        # self.telemetry_start_btn = ttk.Button(
+        #     telemetry_control_frame,
+        #     text="Start Auto-Refresh",
+        #     command=self.start_telemetry_refresh,
+        #     style='Accent.TButton'
+        # )
+        # self.telemetry_start_btn.pack(side=tk.LEFT, padx=5)
 
-        self.telemetry_stop_btn = ttk.Button(
-            telemetry_control_frame,
-            text="Stop Auto-Refresh",
-            command=self.stop_telemetry_refresh,
-            style='Stop.TButton',
-            state=tk.DISABLED
-        )
-        self.telemetry_stop_btn.pack(side=tk.LEFT, padx=5)
+        # self.telemetry_stop_btn = ttk.Button(
+        #     telemetry_control_frame,
+        #     text="Stop Auto-Refresh",
+        #     command=self.stop_telemetry_refresh,
+        #     style='Stop.TButton',
+        #     state=tk.DISABLED
+        # )
+        # self.telemetry_stop_btn.pack(side=tk.LEFT, padx=5)
 
         self.telemetry_count_label = ttk.Label(
             telemetry_control_frame,
@@ -548,10 +553,10 @@ class ModernUI:
 
             time.sleep(TRANSMIT_INTERVAL)
 
-            
-
     def start_transmission(self):
         global sending, send_thread
+
+        self.start_datetime = datetime.now()
 
         self.fetch_and_display_odometer()
 
@@ -571,13 +576,33 @@ class ModernUI:
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
 
+        # Clear previous data and start fresh
+        self.telemetry_output.delete(1.0, tk.END)
+        self.telemetry_packet_count = 0
+        self.telemetry_count_label.config(text=f"Packets Received at Server: {self.telemetry_packet_count}")
+
+        # Initialize last data tracking
+        self.last_telemetry_data = None
+        self.last_telemetry_timestamp = None
+        self.telemetry_refresh = True
+
         send_thread = threading.Thread(target=self.transmit_loop, daemon=True)
         send_thread.start()
 
-        
+        # Start the telemetry thread
+        self.telemetry_thread = threading.Thread(
+            target=self.telemetry_refresh_loop,
+            daemon=True
+        )
+        self.telemetry_thread.start()
 
     def stop_transmission(self):
         global sending
+
+        self.telemetry_refresh = False
+
+        self.end_datetime = datetime.now()
+
         sending = False
         self.status_var.set("Status: IDLE")
         self.start_btn.config(state=tk.NORMAL)
@@ -601,14 +626,15 @@ class ModernUI:
 
             self.api_output.delete(1.0, tk.END)
             self.api_output.insert(tk.END, f"API Response for VIN: {vin}\n\n", 'bold')
-            # self.api_output.insert(tk.END, json.dumps(json_data, indent=2))
+            self.api_output.insert(tk.END, json.dumps(json_data, indent=2))
 
             # print("sorted data", json_data)
 
             # Loop through each result entry
             for entry in json_data['result']:
-                samples = entry['cvISOGenericCANProtobufData']['vehicleisogenericcanpayload']['genericcan']['sampledataisogenericList']
-                
+                samples = entry['cvISOGenericCANProtobufData']['vehicleisogenericcanpayload']['genericcan'][
+                    'sampledataisogenericList']
+
                 for sample in samples:
                     identifiers = sample['identifierdlcdataisogenericList']
                     for item in identifiers:
@@ -639,14 +665,36 @@ class ModernUI:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.validate_output.insert(tk.END, f"Started: {now}\n\n", 'timestamp')
 
+            # Ensure start_datetime is set
+            if not hasattr(self, 'start_datetime') or self.start_datetime is None:
+                self.validate_output.insert(tk.END,
+                                            "Start time not recorded. Please press 'Start Transmission' first.\n",
+                                            'error')
+                return
+
+            # Format start and end times for API
+            start_date = self.start_datetime.strftime("%d/%m/%Y")
+            start_time = self.start_datetime.strftime("%I:%M:%S %p")
+            end_datetime = datetime.now()
+            end_date = end_datetime.strftime("%d/%m/%Y")
+            end_time = end_datetime.strftime("%I:%M:%S %p")
+
+            query_params = {
+                "topic": f"/device/{vin}/MQTTPROTOBUF/cvISOgenericCAN",
+                "startDate": start_date,
+                "startTime": start_time,
+                "endDate": end_date,
+                "endTime": end_time
+            }
+
+            api_base = "https://aepltest.accoladeelectronics.com:8100/cvISOGenericCANProtobuf/getCvISOGenericCANProtobufDataWithTLS"
+            API_URL = f"{api_base}?{urlencode(query_params)}"
+
+            print("API URL:", API_URL)  # Optional for debugging
+
             CA_CERT = r"ca.pem"
             CLIENT_CERT = r"cc.pem"
             CLIENT_KEY = r"ck.pem"
-            API_URL = (
-                f"https://aepltest.accoladeelectronics.com:8100/"
-                f"cvISOGenericCANProtobuf/getCvISOGenericCANProtobufDataWithTLS"
-                f"?topic=/device/{vin}/MQTTPROTOBUF/cvISOgenericCAN"
-            )
 
             response = requests.get(API_URL, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
             response.raise_for_status()
@@ -667,23 +715,18 @@ class ModernUI:
                             self.validate_output.insert(tk.END, "-" * 50 + "\n\n")
                             identifier = item['identifier']
                             dlc = item['dlc']
-                            raw_hex_string = item['data']  # e.g., "00000000000C0000"
+                            raw_hex_string = item['data']
 
                             try:
-                                # Convert identifier (e.g., "4FA") to int
                                 identifier_int = int(identifier, 16)
-
-                                # Convert hex string to bytes
                                 raw_bytes = bytes.fromhex(raw_hex_string)
 
-                                # Display CAN frame
                                 self.validate_output.insert(
                                     tk.END,
                                     f"Identifier: 0x{identifier_int:X}\n\n",
-                                    'bold'  # Optional: tag this line for bold text
+                                    'bold'
                                 )
 
-                                # Decode using DBC
                                 if db:
                                     message = db.get_message_by_frame_id(identifier_int)
                                     decoded = message.decode(raw_bytes)
@@ -708,24 +751,11 @@ class ModernUI:
             except Exception as parse_err:
                 self.validate_output.insert(tk.END, f"\nError parsing server data: {parse_err}\n", 'error')
 
-            # Add timestamp
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.validate_output.insert(tk.END, f"\nLast updated: {now}\n", 'timestamp')
-
-            # Automatically save the content to a file
-            try:
-                file_name = f"validation_log_{vin}.txt"
-                # file_name = "validation_log_{vin}.txt"
-                content = self.validate_output.get("1.0", tk.END)
-                with open(file_name, "a", encoding="utf-8") as file:  # Append mode
-                    file.write("\n" + "="*80 + "\n")  # Optional separator
-                    file.write(content)
-            except Exception as file_err:
-                self.validate_output.insert(tk.END, f"\nError saving file: {file_err}\n", 'error')
 
         except requests.exceptions.RequestException as e:
             self.validate_output.insert(tk.END, f"\n\nAPI Error: {e}", 'error')
-
 
     def extract_server_value(self, server_data, can_id, signal_name):
         """
@@ -743,85 +773,93 @@ class ModernUI:
         except:
             return 0
 
-    def start_telemetry_refresh(self):
-        """Start automatic telemetry data refresh"""
-        if not self.vin_var.get().strip():
-            messagebox.showerror("Error", "Please enter a VIN number")
-            return
+    # def start_telemetry_refresh(self):
+    #     """Start automatic telemetry data refresh"""
+    #     if not self.vin_var.get().strip():
+    #         messagebox.showerror("Error", "Please enter a VIN number")
+    #         return
+    #
+    #     self.telemetry_refresh = True
+    #     self.telemetry_start_btn.config(state=tk.DISABLED)
+    #     self.telemetry_stop_btn.config(state=tk.NORMAL)
 
-        self.telemetry_refresh = True
-        self.telemetry_start_btn.config(state=tk.DISABLED)
-        self.telemetry_stop_btn.config(state=tk.NORMAL)
+        # # Clear previous data and start fresh
+        # self.telemetry_output.delete(1.0, tk.END)
+        # self.telemetry_packet_count = 0
+        # self.telemetry_count_label.config(text=f"Packets Received at Server: {self.telemetry_packet_count}")
+        #
+        # # Initialize last data tracking
+        # self.last_telemetry_data = None
+        # self.last_telemetry_timestamp = None
 
-        # Clear previous data and start fresh
-        self.telemetry_output.delete(1.0, tk.END)
-        self.telemetry_packet_count = 0
-        self.telemetry_count_label.config(text=f"Packets Received at Server: {self.telemetry_packet_count}")
+        # # Start the telemetry thread
+        # self.telemetry_thread = threading.Thread(
+        #     target=self.telemetry_refresh_loop,
+        #     daemon=True
+        # )
+        # self.telemetry_thread.start()
 
-        # Initialize last data tracking
-        self.last_telemetry_data = None
-        self.last_telemetry_timestamp = None
-
-        # Start the telemetry thread
-        self.telemetry_thread = threading.Thread(
-            target=self.telemetry_refresh_loop,
-            daemon=True
-        )
-        self.telemetry_thread.start()
-
-    def stop_telemetry_refresh(self):
-        """Stop automatic telemetry data refresh"""
-        self.telemetry_refresh = False
-        self.telemetry_start_btn.config(state=tk.NORMAL)
-        self.telemetry_stop_btn.config(state=tk.DISABLED)
+    # def stop_telemetry_refresh(self):
+    #     """Stop automatic telemetry data refresh"""
+    #     self.telemetry_refresh = False
+    #     self.telemetry_start_btn.config(state=tk.NORMAL)
+    #     self.telemetry_stop_btn.config(state=tk.DISABLED)
 
     def telemetry_refresh_loop(self):
-        """Thread function for continuous telemetry data refresh"""
-        last_packet_hash = None  # To track if we've seen this packet before
+        CA_CERT = r"ca.pem"
+        CLIENT_CERT = r"cc.pem"
+        CLIENT_KEY = r"ck.pem"
+
+        api_base = "https://aepltest.accoladeelectronics.com:8100/telemetryProtobuf/getTelemetryProtobufDataWithTLS"
+        last_packet_hash = None
 
         while self.telemetry_refresh:
             try:
                 vin = self.vin_var.get().strip()
-                if not vin:
-                    self.stop_telemetry_refresh()
-                    return
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                # Fetch telemetry data
-                CA_CERT = r"ca.pem"
-                CLIENT_CERT = r"cc.pem"
-                CLIENT_KEY = r"ck.pem"
-                API_URL = f"https://aepltest.accoladeelectronics.com:8100/telemetryProtobuf/getTelemetryProtobufDataWithTLS?topic=/device/{vin}/MQTTPROTOBUF/telemetry"
+                if self.start_datetime:
+                    start_date = self.start_datetime.strftime("%d/%m/%Y")
+                    start_time = self.start_datetime.strftime("%I:%M:%S %p")
+                else:
+                    start_date = start_time = ""
 
-                response = requests.get(API_URL, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
+                if self.end_datetime:
+                    end_date = self.end_datetime.strftime("%d/%m/%Y")
+                    end_time = self.end_datetime.strftime("%I:%M:%S %p")
+                else:
+                    end_date = end_time = ""
+
+                query_params = {
+                    "topic": f"/device/{vin}/MQTTPROTOBUF/telemetry",
+                    "startDate": start_date,
+                    "startTime": start_time,
+                    "endDate": end_date,
+                    "endTime": end_time
+                }
+
+                api_url = f"{api_base}?{urlencode(query_params)}"
+
+                print(f"Requesting URL: {api_url}")  # Debug print
+
+                response = requests.get(api_url, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
                 response.raise_for_status()
                 telemetry_data = response.json()
 
-                # Create a hash of the packet data to detect new packets
                 current_packet_hash = hash(json.dumps(telemetry_data, sort_keys=True))
 
-                # Get current timestamp
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-
-                # Check if this is a new packet (different from last received)
                 if current_packet_hash != last_packet_hash:
-                    # Update packet count only if data is different
                     self.telemetry_packet_count += 1
                     last_packet_hash = current_packet_hash
-
-                    # Update UI in main thread with new packet flag
-                    self.root.after(0, self.update_telemetry_display,
-                                    telemetry_data, now, True)
+                    self.root.after(0, self.update_telemetry_display, telemetry_data, now, True)
                 else:
-                    # Just update the display without incrementing count
-                    self.root.after(0, self.update_telemetry_display,
-                                    telemetry_data, now, False)
+                    self.root.after(0, self.update_telemetry_display, telemetry_data, now, False)
 
-                # Wait for next refresh
                 time.sleep(API_REFRESH_INTERVAL)
 
             except requests.exceptions.RequestException as e:
                 self.root.after(0, self.telemetry_output.insert, tk.END,
-                                f"Error fetching telemetry data: {e}\n", 'error')
+                                f"Waiting for API Response \n")
                 time.sleep(API_REFRESH_INTERVAL)
             except Exception as e:
                 self.root.after(0, self.telemetry_output.insert, tk.END,
@@ -829,29 +867,116 @@ class ModernUI:
                 time.sleep(API_REFRESH_INTERVAL)
 
     def update_telemetry_display(self, telemetry_data, timestamp, is_new_packet):
-        """Update the telemetry display with new data"""
-        # Update packet count if this is a new packet
-        if is_new_packet:
-            self.telemetry_count_label.config(
-                text=f"Packets Received at Server: {self.telemetry_packet_count}")
+        try:
+            if is_new_packet:
+                self.telemetry_count_label.config(
+                    text=f"Packets Received at Server: {self.telemetry_packet_count}"
+                )
 
-        # Insert timestamp and packet info
-        self.telemetry_output.insert(tk.END, f"[{timestamp}] ", 'timestamp')
+                # Save to file
+                try:
+                    with open("received_telemetry.txt", "a", encoding="utf-8") as file:
+                        file.write(f"[{timestamp}] NEW Packet #{self.telemetry_packet_count}\n")
 
-        if is_new_packet:
-            self.telemetry_output.insert(tk.END,
-                                         f"NEW Packet #{self.telemetry_packet_count}\n", 'count')
-        else:
-            self.telemetry_output.insert(tk.END,
-                                         f"Same Packet (Last: #{self.telemetry_packet_count})\n", 'count')
+                        for idx, item in enumerate(telemetry_data.get("result", [])):
+                            file.write("-" * 50 + "\n")
+                            file.write(f"\nItem {idx}\n")
+                            file.write("\nBASIC INFORMATION\n" + "-" * 50 + "\n")
 
-        # Insert telemetry data with indentation
-        self.telemetry_output.insert(tk.END, "Telemetry Data:\n")
-        self.telemetry_output.insert(tk.END, json.dumps(telemetry_data, indent=2))
-        self.telemetry_output.insert(tk.END, "\n\n")
+                            file.write(f"receivedAt           : {item.get('receivedAt', 'N/A')}\n")
+                            file.write(f"telemetryProtobufTopic : {item.get('telemetryProtobufTopic', 'N/A')}\n")
 
-        # Auto-scroll to bottom
-        self.telemetry_output.see(tk.END)
+                            tls_data = item.get("telemetryProtobufWithTLSData", {})
+
+                            file.write(f"messageId            : {tls_data.get('messageId', 'N/A')}\n")
+                            file.write(f"to                   : {tls_data.get('to', 'N/A')}\n")
+                            file.write(f"correlationId        : {tls_data.get('correlationId', 'N/A')}\n")
+                            file.write(f"userId               : {tls_data.get('userId', 'N/A')}\n")
+                            file.write(f"vehicleId            : {tls_data.get('vehicleId', 'N/A')}\n")
+                            file.write(f"version              : {tls_data.get('version', 'N/A')}\n")
+                            file.write(
+                                f"timestamp (seconds)  : {tls_data.get('timeStamp', {}).get('seconds', 'N/A')}\n")
+                            file.write(f"timestamp (nanos)    : {tls_data.get('timeStamp', {}).get('nanos', 'N/A')}\n")
+                            file.write(f"type                 : {tls_data.get('type', 'N/A')}\n")
+                            file.write(f"subtype              : {tls_data.get('subtype', 'N/A')}\n")
+                            file.write(f"priority             : {tls_data.get('priority', 'N/A')}\n")
+                            file.write(f"operatingState       : {tls_data.get('operatingState', 'N/A')}\n")
+                            file.write(f"provisioningState    : {tls_data.get('provisioningState', 'N/A')}\n")
+
+                            file.write("\n[Telemetry Payload]\n")
+                            payload = tls_data.get("vehicletelemetrypayload", {})
+                            measures_list = payload.get("measuresList", [])
+
+                            for m_idx, measure in enumerate(measures_list):
+                                file.write(f"\n  Measure {m_idx}\n")
+                                for k, v in measure.items():
+                                    file.write(f"    {k:<20}: {v}\n")
+
+                        file.write("--------------------------------------------------\n\n")
+                except Exception as file_error:
+                    print(f"Error writing to file: {file_error}")
+
+            # Clear previous display
+            self.telemetry_output.delete(1.0, tk.END)
+
+            header = f"[{timestamp}] "
+            header += f"NEW Packet #{self.telemetry_packet_count}\n" if is_new_packet else f"Same Packet (Last: #{self.telemetry_packet_count})\n"
+            self.telemetry_output.insert(tk.END, header, 'count')
+
+            for idx, item in enumerate(telemetry_data.get("result", [])):
+
+                self.telemetry_output.insert(tk.END, "-" * 50 + "\n")
+                self.telemetry_output.insert(tk.END, f"\nItem {idx}\n", 'section')
+
+                # -------- BASIC INFO --------
+                self.telemetry_output.insert(tk.END, "\nBASIC INFORMATION\n", 'subheader')
+                self.telemetry_output.insert(tk.END, "-" * 50 + "\n")
+
+                self.telemetry_output.insert(tk.END, f"receivedAt           : {item.get('receivedAt', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END,
+                                             f"telemetryProtobufTopic : {item.get('telemetryProtobufTopic', 'N/A')}\n")
+
+                tls_data = item.get("telemetryProtobufWithTLSData", {})
+
+                self.telemetry_output.insert(tk.END, f"messageId            : {tls_data.get('messageId', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"to                   : {tls_data.get('to', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"correlationId        : {tls_data.get('correlationId', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"userId               : {tls_data.get('userId', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"vehicleId            : {tls_data.get('vehicleId', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"version              : {tls_data.get('version', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END,
+                                             f"timestamp (seconds)  : {tls_data.get('timeStamp', {}).get('seconds', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END,
+                                             f"timestamp (nanos)    : {tls_data.get('timeStamp', {}).get('nanos', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"type                 : {tls_data.get('type', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"subtype              : {tls_data.get('subtype', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END, f"priority             : {tls_data.get('priority', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END,
+                                             f"operatingState       : {tls_data.get('operatingState', 'N/A')}\n")
+                self.telemetry_output.insert(tk.END,
+                                             f"provisioningState    : {tls_data.get('provisioningState', 'N/A')}\n")
+
+                self.telemetry_output.insert(tk.END, "--------------------------------------------------\n")
+
+                # -------- TELEMETRY PAYLOAD --------
+                self.telemetry_output.insert(tk.END, "\n[Telemetry Payload]\n", 'heading')
+                payload = tls_data.get("vehicletelemetrypayload", {})
+                measures_list = payload.get("measuresList", [])
+
+                for m_idx, measure in enumerate(measures_list):
+                    self.telemetry_output.insert(tk.END, f"\n  Measure {m_idx}\n", 'subsection')
+                    for k, v in measure.items():
+                        self.telemetry_output.insert(tk.END, f"    {k:<20}: {v}\n")
+
+            self.telemetry_output.insert(tk.END, "--------------------------------------------------\n\n")
+            self.telemetry_output.see('1.0')
+
+        except Exception as e:
+            self.telemetry_output.delete('1.0', tk.END)
+            self.telemetry_output.insert('1.0',
+                                         "--------------------------------------------------\n"
+                                         f"Error displaying telemetry: {e}\n"
+                                         "--------------------------------------------------\n")
 
     def on_close(self):
         """Handle window close event"""
